@@ -1,0 +1,24 @@
+[submodule "point-tokenization-vault/lib/forge-std"]
+	path = point-tokenization-vault/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "point-tokenization-vault/lib/solmate"]
+	path = point-tokenization-vault/lib/solmate
+	url = https://github.com/transmissions11/solmate
+[submodule "point-tokenization-vault/lib/openzeppelin-contracts"]
+	path = point-tokenization-vault/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "point-tokenization-vault/lib/openzeppelin-contracts-upgradeable"]
+	path = point-tokenization-vault/lib/openzeppelin-contracts-upgradeable
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable
+[submodule "point-tokenization-vault/lib/solady"]
+	path = point-tokenization-vault/lib/solady
+	url = https://github.com/vectorized/solady
+[submodule "point-tokenization-vault/lib/forge-safe"]
+	path = point-tokenization-vault/lib/forge-safe
+	url = https://github.com/sense-finance/forge-safe
+[submodule "point-tokenization-vault/lib/create3-factory"]
+	path = point-tokenization-vault/lib/create3-factory
+	url = https://github.com/zeframlou/create3-factory
+[submodule "point-tokenization-vault/lib/openzeppelin-foundry-upgrades"]
+	path = point-tokenization-vault/lib/openzeppelin-foundry-upgrades
+	url = https://github.com/OpenZeppelin/openzeppelin-foundry-upgrades
