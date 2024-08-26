@@ -22,3 +22,18 @@
 [submodule "point-tokenization-vault/lib/openzeppelin-foundry-upgrades"]
 	path = point-tokenization-vault/lib/openzeppelin-foundry-upgrades
 	url = https://github.com/OpenZeppelin/openzeppelin-foundry-upgrades
+[submodule "rumpel-wallet/lib/forge-std"]
+	path = rumpel-wallet/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "rumpel-wallet/lib/openzeppelin-contracts"]
+	path = rumpel-wallet/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "rumpel-wallet/lib/solmate"]
+	path = rumpel-wallet/lib/solmate
+	url = https://github.com/transmissions11/solmate
+[submodule "rumpel-wallet/lib/point-tokenization-vault"]
+	path = rumpel-wallet/lib/point-tokenization-vault
+	url = https://github.com/sense-finance/point-tokenization-vault
+[submodule "rumpel-wallet/safe-smart-account"]
+	path = rumpel-wallet/safe-smart-account
+	url = https://github.com/safe-global/safe-smart-account/
