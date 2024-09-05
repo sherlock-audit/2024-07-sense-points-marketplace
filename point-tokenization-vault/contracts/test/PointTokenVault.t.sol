@@ -1,20 +1,16 @@
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
+// SPDX-License-Identifier: AGPL-3.0-only
+pragma solidity =0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
 import {PointTokenVault} from "../PointTokenVault.sol";
 import {PToken} from "../PToken.sol";
 
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {ERC1967Utils} from "openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
-import {MockERC20} from "solmate/test/utils/mocks/MockERC20.sol";
+import {MockERC20, ERC20} from "solmate/test/utils/mocks/MockERC20.sol";
 
 import {LibString} from "solady/utils/LibString.sol";
-
-import {OwnableUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 
 import {PointTokenVaultScripts} from "../script/PointTokenVault.s.sol";
 
@@ -150,6 +146,47 @@ contract PointTokenVaultTest is Test {
         assertEq(pointTokenVault.balances(vitalik, newMockToken), 2e18); // Total 2 tokens deposited
     }
 
+    function test_DepositCapRewardSameAsDeposit() public {
+        // Set up an 18 decimal token as both deposit and reward token
+        MockERC20 token = new MockERC20("Example Token", "EX", 18);
+
+        vm.startPrank(operator);
+        // Set deposit cap for token to 5000
+        pointTokenVault.setCap(address(token), 5000e18);
+
+        // Set token as reward token with 1:1 ratio
+        pointTokenVault.setRedemption(eigenPointsId, token, 1e18, false);
+        vm.stopPrank();
+
+        // Mint tokens to users
+        token.mint(vitalik, 5000e18);
+        token.mint(toly, 2000e18);
+
+        // Vitalik deposits 4000 tokens
+        vm.startPrank(vitalik);
+        token.approve(address(pointTokenVault), 4000e18);
+        pointTokenVault.deposit(token, 4000e18, vitalik);
+        vm.stopPrank();
+
+        // Toly converts 2000 tokens to pTokens
+        vm.startPrank(toly);
+        token.approve(address(pointTokenVault), 2000e18);
+        pointTokenVault.convertRewardsToPTokens(toly, eigenPointsId, 2000e18);
+        vm.stopPrank();
+
+        // Assert current token balance in vault
+        assertEq(token.balanceOf(address(pointTokenVault)), 6000e18);
+
+        // Try to deposit 1000 tokens, which should succeed
+        vm.startPrank(vitalik);
+        token.approve(address(pointTokenVault), 1000e18);
+        pointTokenVault.deposit(token, 1000e18, vitalik);
+        vm.stopPrank();
+
+        // Assert that 5000 tokens have been deposited
+        assertEq(pointTokenVault.balances(vitalik, token), 5000e18);
+    }
+
     function test_DeployPToken() public {
         // Can't deploy the same token twice
         vm.expectRevert(PointTokenVault.PTokenAlreadyDeployed.selector);
@@ -238,6 +275,17 @@ contract PointTokenVaultTest is Test {
         pointTokenVault.execute(
             address(callEcho), abi.encodeWithSelector(CallEcho.callEcho.selector, echo, "Hello"), GAS_LIMIT
         );
+
+        // Test that failed calls revert with ExecutionFailed error
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PointTokenVault.ExecutionFailed.selector,
+                address(callEcho),
+                abi.encodeWithSelector(CallEcho.fail.selector)
+            )
+        );
+        pointTokenVault.execute(address(callEcho), abi.encodeWithSelector(CallEcho.fail.selector), GAS_LIMIT);
     }
 
     event PTokensClaimed(
@@ -409,6 +457,31 @@ contract PointTokenVaultTest is Test {
         assertEq(pointTokenVault.pTokens(eigenPointsId).balanceOf(vitalik), 1e18 - 1);
     }
 
+    function test_RedeemRewardsWith6DecimalToken() public {
+        // Setup a mock 6-decimal token (like USDC)
+        MockERC20 usdcReward = new MockERC20("USDC Reward", "USDC", 6);
+
+        // Mint 1,000,000 USDC to the vault
+        usdcReward.mint(address(pointTokenVault), 1_000_000 * 1e6);
+
+        // Set redemption parameters (1 pToken = 1 USDC)
+        vm.prank(operator);
+        pointTokenVault.setRedemption(eigenPointsId, usdcReward, 1e18, false);
+
+        // Mint 1 pToken to vitalik
+        vm.startPrank(address(pointTokenVault));
+        pointTokenVault.pTokens(eigenPointsId).mint(vitalik, 1e18);
+        vm.stopPrank();
+
+        // Vitalik redeems 1 pToken for 1 USDC
+        vm.prank(vitalik);
+        pointTokenVault.redeemRewards(PointTokenVault.Claim(eigenPointsId, 1e6, 1e6, new bytes32[](0)), vitalik);
+
+        // Check balances
+        assertEq(usdcReward.balanceOf(vitalik), 1e6, "Vitalik should receive 1 USDC");
+        assertEq(pointTokenVault.pTokens(eigenPointsId).balanceOf(vitalik), 0, "Vitalik should have 0 pTokens left");
+    }
+
     event RewardsClaimed(
         address indexed owner, address indexed receiver, bytes32 indexed pointsId, uint256 amount, uint256 tax
     );
@@ -482,7 +555,7 @@ contract PointTokenVaultTest is Test {
         assertEq(pointTokenVault.pTokens(eigenPointsId).balanceOf(vitalik), 1e18);
     }
 
-    function test_TrustedClaimer() public {
+    function test_TrustedReceiver() public {
         bytes32 root = 0x4e40a10ce33f33a4786960a8bb843fe0e170b651acd83da27abc97176c4bed3c;
 
         bytes32[] memory proof = new bytes32[](1);
@@ -493,12 +566,12 @@ contract PointTokenVaultTest is Test {
 
         // Toly tries to claim vitalik's pTokens (should fail)
         vm.prank(toly);
-        vm.expectRevert(PointTokenVault.NotTrustedClaimer.selector);
+        vm.expectRevert(PointTokenVault.NotTrustedReceiver.selector);
         pointTokenVault.claimPTokens(PointTokenVault.Claim(eigenPointsId, 1e18, 0.6e18, proof), vitalik, toly);
 
         // Vitalik delegates claiming rights to Toly
         vm.prank(vitalik);
-        pointTokenVault.trustClaimer(toly, true);
+        pointTokenVault.trustReceiver(toly, true);
 
         // Toly claims the half of Vitalik's pTokens
         vm.prank(toly);
@@ -519,7 +592,7 @@ contract PointTokenVaultTest is Test {
 
     event RewardsConverted(address indexed owner, address indexed receiver, bytes32 indexed pointsId, uint256 amount);
 
-    function test_MintPTokensForRewards() public {
+    function test_ConvertRewardsToPTokens() public {
         bytes32 root = 0x4e40a10ce33f33a4786960a8bb843fe0e170b651acd83da27abc97176c4bed3c;
 
         bytes32[] memory proof = new bytes32[](1);
@@ -535,9 +608,9 @@ contract PointTokenVaultTest is Test {
 
         // Cannot redeem pTokens or convert rewards before redemption data is set
         bytes32[] memory empty = new bytes32[](0);
-        vm.expectRevert(PointTokenVault.RewardsNotReleased.selector);
+        vm.expectRevert(PointTokenVault.RewardsNotLive.selector);
         pointTokenVault.redeemRewards(PointTokenVault.Claim(eigenPointsId, 2e18, 2e18, empty), vitalik);
-        vm.expectRevert(PointTokenVault.RewardsNotReleased.selector);
+        vm.expectRevert(PointTokenVault.RewardsNotLive.selector);
         pointTokenVault.convertRewardsToPTokens(vitalik, eigenPointsId, 1e18);
 
         vm.prank(operator);
@@ -568,17 +641,43 @@ contract PointTokenVaultTest is Test {
         assertEq(pointTokenVault.pTokens(eigenPointsId).balanceOf(vitalik), 0);
     }
 
+    function test_ConvertRewardsToPTokensWith6DecimalToken() public {
+        // Setup a mock 6-decimal token (like USDC)
+        MockERC20 usdcReward = new MockERC20("USDC Reward", "USDC", 6);
+
+        // Mint 1,000,000 USDC to vitalik
+        usdcReward.mint(vitalik, 1_000_000 * 1e6);
+
+        // Set redemption parameters (1 pToken = 1 USDC)
+        vm.prank(operator);
+        pointTokenVault.setRedemption(eigenPointsId, usdcReward, 1e18, false);
+
+        // Approve USDC spend
+        vm.prank(vitalik);
+        usdcReward.approve(address(pointTokenVault), type(uint256).max);
+
+        // Vitalik converts 1 USDC to 1 pToken
+        vm.prank(vitalik);
+        pointTokenVault.convertRewardsToPTokens(vitalik, eigenPointsId, 1e6);
+
+        // Check balances
+        assertEq(usdcReward.balanceOf(vitalik), 999_999 * 1e6, "Vitalik should have 999,999 USDC left");
+        assertEq(pointTokenVault.pTokens(eigenPointsId).balanceOf(vitalik), 1e18, "Vitalik should receive 1 pToken");
+    }
+
     event FeeCollectorSet(address feeCollector);
-    
+
     function test_setFeeCollector() public {
         vm.prank(admin);
-        vm.expectEmit(true,true,true,true);
+        vm.expectEmit(true, true, true, true);
         emit FeeCollectorSet(toly);
         pointTokenVault.setFeeCollector(toly);
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, address(vitalik), pointTokenVault.DEFAULT_ADMIN_ROLE()
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                address(vitalik),
+                pointTokenVault.DEFAULT_ADMIN_ROLE()
             )
         );
         vm.prank(vitalik);
@@ -675,9 +774,23 @@ contract PointTokenVaultTest is Test {
         vm.prank(toly);
         pointTokenVault.redeemRewards(PointTokenVault.Claim(eigenPointsId, 1.8e18, 1.8e18, empty), toly);
 
+        // Unset redemption
+        vm.prank(operator);
+        pointTokenVault.setRedemption(eigenPointsId, ERC20(address(0)), 0, false);
+
+        // No reward token fees are collected.
+        vm.expectEmit(true, true, true, true);
+        emit FeesCollected(eigenPointsId, pointTokenVault.feeCollector(), 0.1e18, 0);
+        pointTokenVault.collectFees(eigenPointsId);
+        assertEq(rewardToken.balanceOf(pointTokenVault.feeCollector()), 0);
+
+        // Set redemption again
+        vm.prank(operator);
+        pointTokenVault.setRedemption(eigenPointsId, rewardToken, 2e18, false);
+
         // Collect fees
         vm.expectEmit(true, true, true, true);
-        emit FeesCollected(eigenPointsId, pointTokenVault.feeCollector(), 0.1e18, 0.09e18);
+        emit FeesCollected(eigenPointsId, pointTokenVault.feeCollector(), 0, 0.09e18);
         pointTokenVault.collectFees(eigenPointsId);
 
         // Check balances after fee collection
@@ -888,5 +1001,9 @@ contract Echo {
 contract CallEcho {
     function callEcho(Echo echo, string calldata message) public {
         echo.echo(message);
+    }
+
+    function fail() public pure {
+        revert("Failed");
     }
 }
