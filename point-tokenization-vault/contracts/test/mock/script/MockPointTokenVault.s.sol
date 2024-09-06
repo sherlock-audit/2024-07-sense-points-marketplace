@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
+pragma solidity =0.8.24;
 
 import {BatchScript} from "forge-safe/src/BatchScript.sol";
 
@@ -55,15 +55,18 @@ contract MockPointTokenVaultScripts is BatchScript {
     }
 
     function run(string memory version) public returns (MockPointTokenVault) {
-        MockPointTokenVault pointTokenVaultImplementation = new MockPointTokenVault{salt: keccak256(abi.encode(version))}();
+        MockPointTokenVault pointTokenVaultImplementation =
+            new MockPointTokenVault{salt: keccak256(abi.encode(version))}();
 
-        MockPointTokenVault pointTokenVault = MockPointTokenVault(payable(
-            address(
-                new ERC1967Proxy{salt: keccak256(abi.encode(version))}(
-                    address(pointTokenVaultImplementation),
-                    abi.encodeCall(MockPointTokenVault.initialize, (msg.sender)) // msg.sender is admin
+        MockPointTokenVault pointTokenVault = MockPointTokenVault(
+            payable(
+                address(
+                    new ERC1967Proxy{salt: keccak256(abi.encode(version))}(
+                        address(pointTokenVaultImplementation),
+                        abi.encodeCall(MockPointTokenVault.initialize, (msg.sender)) // msg.sender is admin
+                    )
                 )
-            ))
+            )
         );
 
         return pointTokenVault;
@@ -87,7 +90,8 @@ contract MockPointTokenVaultScripts is BatchScript {
     function upgrade() public {
         vm.startBroadcast();
 
-        MockPointTokenVault currentPointTokenVault = MockPointTokenVault(payable(0xbff7Fb79efC49504afc97e74F83EE618768e63E9));
+        MockPointTokenVault currentPointTokenVault =
+            MockPointTokenVault(payable(0xbff7Fb79efC49504afc97e74F83EE618768e63E9));
 
         MockPointTokenVault PointTokenVaultImplementation = new MockPointTokenVault();
 
@@ -124,8 +128,9 @@ contract MockPointTokenVaultScripts is BatchScript {
 
         address pointTokenVault = 0xbff7Fb79efC49504afc97e74F83EE618768e63E9;
 
-        bytes memory txn =
-            abi.encodeWithSelector(MockPointTokenVault.setCap.selector, 0x791a051631c9c4cDf4E03Fb7Aec3163AE164A34B, 10e18);
+        bytes memory txn = abi.encodeWithSelector(
+            MockPointTokenVault.setCap.selector, 0x791a051631c9c4cDf4E03Fb7Aec3163AE164A34B, 10e18
+        );
         addToBatch(pointTokenVault, 0, txn);
 
         executeBatch(SEOPLIA_ADMIN_SAFE, true);

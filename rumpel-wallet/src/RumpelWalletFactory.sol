@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.19;
+// SPDX-License-Identifier: AGPL-3.0-only
+pragma solidity =0.8.24;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
@@ -45,6 +45,9 @@ contract RumpelWalletFactory is Ownable, Pausable {
         uint256 threshold,
         InitializationScript.InitCall[] calldata initCalls
     ) external whenNotPaused returns (address) {
+        // Calculate a unique salt based on the sender's address and nonce.
+        uint256 salt = uint256(keccak256(abi.encodePacked(msg.sender, saltNonce[msg.sender]++)));
+
         address safe = proxyFactory.createProxyWithNonce(
             safeSingleton,
             abi.encodeWithSelector(
@@ -58,7 +61,7 @@ contract RumpelWalletFactory is Ownable, Pausable {
                 0, // payment
                 address(0) // paymentReceiver
             ),
-            saltNonce[msg.sender]++ // For deterministic address generation
+            salt // For deterministic address generation
         );
 
         emit SafeCreated(safe, owners, threshold);
@@ -66,8 +69,14 @@ contract RumpelWalletFactory is Ownable, Pausable {
         return safe;
     }
 
-    function precomputeAddress(bytes memory _initializer, uint256 _saltNonce) external view returns (address) {
-        bytes32 salt = keccak256(abi.encodePacked(keccak256(_initializer), _saltNonce));
+    function precomputeAddress(bytes memory _initializer, address _sender, uint256 _saltNonce)
+        external
+        view
+        returns (address)
+    {
+        bytes32 salt = keccak256(
+            abi.encodePacked(keccak256(_initializer), uint256(keccak256(abi.encodePacked(_sender, _saltNonce))))
+        );
 
         bytes memory deploymentData =
             abi.encodePacked(proxyFactory.proxyCreationCode(), uint256(uint160(safeSingleton)));
@@ -88,6 +97,7 @@ contract RumpelWalletFactory is Ownable, Pausable {
         else if (what == "RUMPEL_MODULE") rumpelModule = data;
         else if (what == "RUMPEL_GUARD") rumpelGuard = data;
         else if (what == "INITIALIZATION_SCRIPT") initializationScript = data;
+        else if (what == "COMPATIBILITY_FALLBACK") compatibilityFallback = data;
         else revert UnrecognizedParam(what);
         emit ParamChanged(what, data);
     }

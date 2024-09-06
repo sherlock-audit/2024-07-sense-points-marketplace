@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.19;
+// SPDX-License-Identifier: AGPL-3.0-only
+pragma solidity =0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
 import {MockERC20} from "solmate/test/utils/mocks/MockERC20.sol";
@@ -90,6 +90,7 @@ contract RumpelWalletTest is Test {
         address newScript = makeAddr("newScript");
         address newSingleton = makeAddr("newSingleton");
         address newProxyFactory = makeAddr("newProxyFactory");
+        address newCompatibilityFallback = makeAddr("newCompatibilityFallback");
 
         vm.startPrank(admin);
         rumpelWalletFactory.setParam("RUMPEL_GUARD", newGuard);
@@ -97,6 +98,7 @@ contract RumpelWalletTest is Test {
         rumpelWalletFactory.setParam("INITIALIZATION_SCRIPT", newScript);
         rumpelWalletFactory.setParam("SAFE_SINGLETON", newSingleton);
         rumpelWalletFactory.setParam("PROXY_FACTORY", newProxyFactory);
+        rumpelWalletFactory.setParam("COMPATIBILITY_FALLBACK", newCompatibilityFallback);
         vm.stopPrank();
 
         assertEq(rumpelWalletFactory.rumpelGuard(), newGuard);
@@ -104,6 +106,7 @@ contract RumpelWalletTest is Test {
         assertEq(rumpelWalletFactory.initializationScript(), newScript);
         assertEq(rumpelWalletFactory.safeSingleton(), newSingleton);
         assertEq(address(rumpelWalletFactory.proxyFactory()), newProxyFactory);
+        assertEq(rumpelWalletFactory.compatibilityFallback(), newCompatibilityFallback);
     }
 
     function testFuzz_createWalletOwners(uint256 ownersLength, uint256 threshold) public {
@@ -157,11 +160,13 @@ contract RumpelWalletTest is Test {
             address(0)
         );
 
+        vm.startPrank(alice);
         uint256 saltNonce = 0; // First wallet for this sender
-        address expectedAddress = rumpelWalletFactory.precomputeAddress(initializer, saltNonce);
+        address expectedAddress = rumpelWalletFactory.precomputeAddress(initializer, alice, saltNonce);
 
         // Create the wallet
         address actualAddress = rumpelWalletFactory.createWallet(owners, 1, initCalls);
+        vm.stopPrank();
 
         // Check if the actual address matches the expected address
         assertEq(actualAddress, expectedAddress, "Actual address does not match expected address");
