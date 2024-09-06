@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
+// SPDX-License-Identifier: AGPL-3.0-only
+pragma solidity =0.8.24;
 
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
@@ -32,8 +32,8 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
     // Merkle root distribution.
     bytes32 public currRoot;
     bytes32 public prevRoot;
-    mapping(address => mapping(bytes32 => uint256)) public claimedPTokens; // user => pointsId => claimed
-    mapping(address => mapping(bytes32 => uint256)) public claimedRedemptionRights; // user => pointsId => claimed
+    mapping(address => mapping(bytes32 => uint256)) public claimedPTokens; // user => pointsId => PTokens claimed
+    mapping(address => mapping(bytes32 => uint256)) public claimedRedemptionRights; // user => pointsId => Rewards redeemed
 
     mapping(bytes32 => PToken) public pTokens; // pointsId => pTokens
 
@@ -41,7 +41,9 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
 
     mapping(address => uint256) public caps; // asset => deposit cap
 
-    mapping(address => mapping(address => bool)) public trustedClaimers; // owner => delegate => trustedClaimers
+    mapping(address => mapping(address => bool)) public trustedReceivers; // owner => delegate => trustedReceivers
+
+    mapping(address => uint256) public totalDeposited; // token => total deposited amount
 
     // Fees
     uint256 public mintFee;
@@ -66,7 +68,7 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
 
     event Deposit(address indexed depositor, address indexed receiver, address indexed token, uint256 amount);
     event Withdraw(address indexed withdrawer, address indexed receiver, address indexed token, uint256 amount);
-    event TrustClaimer(address indexed owner, address indexed delegate, bool isTrusted);
+    event TrustReceiver(address indexed owner, address indexed delegate, bool isTrusted);
     event RootUpdated(bytes32 prevRoot, bytes32 newRoot);
     event PTokensClaimed(
         address indexed account, address indexed receiver, bytes32 indexed pointsId, uint256 amount, uint256 fee
@@ -89,13 +91,14 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
 
     error ProofInvalidOrExpired();
     error ClaimTooLarge();
-    error RewardsNotReleased();
+    error RewardsNotLive();
     error CantConvertMerkleRedemption();
     error PTokenAlreadyDeployed();
     error DepositExceedsCap();
     error PTokenNotDeployed();
     error AmountTooSmall();
-    error NotTrustedClaimer();
+    error NotTrustedReceiver();
+    error ExecutionFailed(address to, bytes data);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -110,25 +113,27 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
         _setFeeCollector(_feeCollector);
     }
 
-    // Rebasing and fee-on-transfer tokens must be wrapped before depositing.
+    // Rebasing and fee-on-transfer tokens must be wrapped before depositing. ie, they are not supported natively.
     function deposit(ERC20 _token, uint256 _amount, address _receiver) public {
         uint256 cap = caps[address(_token)];
 
         if (cap != type(uint256).max) {
-            if (_amount + _token.balanceOf(address(this)) > cap) {
+            if (totalDeposited[address(_token)] + _amount > cap) {
                 revert DepositExceedsCap();
             }
         }
 
-        _token.safeTransferFrom(msg.sender, address(this), _amount);
-
         balances[_receiver][_token] += _amount;
+        totalDeposited[address(_token)] += _amount;
+
+        _token.safeTransferFrom(msg.sender, address(this), _amount);
 
         emit Deposit(msg.sender, _receiver, address(_token), _amount);
     }
 
     function withdraw(ERC20 _token, uint256 _amount, address _receiver) public {
         balances[msg.sender][_token] -= _amount;
+        totalDeposited[address(_token)] -= _amount;
 
         _token.safeTransfer(_receiver, _amount);
 
@@ -149,8 +154,8 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
             revert PTokenNotDeployed();
         }
 
-        if (_account != _receiver && !trustedClaimers[_account][_receiver]) {
-            revert NotTrustedClaimer();
+        if (_account != _receiver && !trustedReceivers[_account][_receiver]) {
+            revert NotTrustedReceiver();
         }
 
         uint256 pTokenFee = FixedPointMathLib.mulWadUp(_claim.amountToClaim, mintFee);
@@ -161,9 +166,9 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
         emit PTokensClaimed(_account, _receiver, pointsId, _claim.amountToClaim, pTokenFee);
     }
 
-    function trustClaimer(address _account, bool _isTrusted) public {
-        trustedClaimers[msg.sender][_account] = _isTrusted;
-        emit TrustClaimer(msg.sender, _account, _isTrusted);
+    function trustReceiver(address _account, bool _isTrusted) public {
+        trustedReceivers[msg.sender][_account] = _isTrusted;
+        emit TrustReceiver(msg.sender, _account, _isTrusted);
     }
 
     /// @notice Redeems point tokens for rewards
@@ -177,7 +182,7 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
             (params.rewardToken, params.rewardsPerPToken, params.isMerkleBased);
 
         if (address(rewardToken) == address(0)) {
-            revert RewardsNotReleased();
+            revert RewardsNotLive();
         }
 
         if (isMerkleBased) {
@@ -188,7 +193,9 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
             _verifyClaimAndUpdateClaimed(_claim, claimHash, msg.sender, claimedRedemptionRights);
         }
 
-        uint256 pTokensToBurn = FixedPointMathLib.divWadUp(amountToClaim, rewardsPerPToken);
+        uint256 scalingFactor = 10 ** (18 - rewardToken.decimals()); // Only tokens with 18 decimals or fewer are supported.
+        uint256 pTokensToBurn = FixedPointMathLib.divWadUp(amountToClaim * scalingFactor, rewardsPerPToken);
+
         pTokens[pointsId].burn(msg.sender, pTokensToBurn);
 
         uint256 claimed = claimedPTokens[msg.sender][pointsId];
@@ -205,12 +212,17 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
             rewardsToTransfer = amountToClaim;
             feelesslyRedeemedPTokens[msg.sender][pointsId] += pTokensToBurn;
         } else {
-            // If some or all of the pTokens need to be charged a fee.
-            uint256 redeemableWithFee = pTokensToBurn - feelesslyRedeemable;
-            // fee = amount of pTokens that are not feeless * rewardsPerPToken * redemptionFee
-            fee = FixedPointMathLib.mulWadUp(
-                FixedPointMathLib.mulWadUp(redeemableWithFee, rewardsPerPToken), redemptionFee
-            );
+            // Calculate the fee. Scope avoids stack too deep errors.
+            {
+                // If some or all of the pTokens need to be charged a fee.
+                uint256 redeemableWithFee = pTokensToBurn - feelesslyRedeemable;
+                // fee = amount of pTokens that are not feeless * rewardsPerPToken * redemptionFee
+                fee = FixedPointMathLib.mulWadUp(
+                    FixedPointMathLib.mulWadUp(redeemableWithFee, rewardsPerPToken), redemptionFee
+                );
+
+                fee = fee / scalingFactor; // Downscale to reward token decimals.
+            }
 
             rewardTokenFeeAcc[pointsId] += fee;
             rewardsToTransfer = amountToClaim - fee;
@@ -232,7 +244,7 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
             (params.rewardToken, params.rewardsPerPToken, params.isMerkleBased);
 
         if (address(rewardToken) == address(0)) {
-            revert RewardsNotReleased();
+            revert RewardsNotLive();
         }
 
         if (isMerkleBased) {
@@ -241,7 +253,8 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
 
         rewardToken.safeTransferFrom(msg.sender, address(this), _amountToConvert);
 
-        uint256 pTokensToMint = FixedPointMathLib.divWadDown(_amountToConvert, rewardsPerPToken); // Round down for mint.
+        uint256 scalingFactor = 10 ** (18 - rewardToken.decimals()); // Only tokens with 18 decimals or fewer are supported.
+        uint256 pTokensToMint = FixedPointMathLib.divWadDown(_amountToConvert * scalingFactor, rewardsPerPToken);
 
         // Dust guard.
         if (pTokensToMint == 0) {
@@ -344,14 +357,18 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
         (uint256 pTokenFee, uint256 rewardTokenFee) = (pTokenFeeAcc[_pointsId], rewardTokenFeeAcc[_pointsId]);
 
         if (pTokenFee > 0) {
-            pTokens[_pointsId].mint(feeCollector, pTokenFee);
             pTokenFeeAcc[_pointsId] = 0;
+            pTokens[_pointsId].mint(feeCollector, pTokenFee);
         }
 
         if (rewardTokenFee > 0) {
-            // There will only be a positive rewardTokenFee if there are reward tokens in this contract available for transfer.
-            redemptions[_pointsId].rewardToken.safeTransfer(feeCollector, rewardTokenFee);
-            rewardTokenFeeAcc[_pointsId] = 0;
+            ERC20 rewardToken = redemptions[_pointsId].rewardToken;
+            if (address(rewardToken) != address(0)) {
+                rewardTokenFeeAcc[_pointsId] = 0;
+                rewardToken.safeTransfer(feeCollector, rewardTokenFee);
+            } else {
+                rewardTokenFee = 0; // Do not collect reward token fees if the reward token is unset.
+            }
         }
 
         emit FeesCollected(_pointsId, feeCollector, pTokenFee, rewardTokenFee);
@@ -369,6 +386,10 @@ contract PointTokenVault is UUPSUpgradeable, AccessControlUpgradeable, Multicall
     {
         assembly {
             success := delegatecall(_txGas, _to, add(_data, 0x20), mload(_data), 0, 0)
+        }
+
+        if (!success) {
+            revert ExecutionFailed(_to, _data);
         }
     }
 
