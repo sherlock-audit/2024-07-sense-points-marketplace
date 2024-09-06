@@ -1,0 +1,175 @@
+diff a/point-tokenization-vault/contracts/test/invariant/handlers/PointTokenVaultHandler.sol b/point-tokenization-vault/contracts/test/invariant/handlers/PointTokenVaultHandler.sol	(rejected hunks)
+@@ -1,4 +1,4 @@
+-pragma solidity ^0.8.13;
++pragma solidity =0.8.24;
+ 
+ import {Test, console, console2} from "forge-std/Test.sol";
+ 
+@@ -83,10 +83,7 @@ contract PointTokenVaultHandler is Test {
+         delete expectedErrors;
+     }
+ 
+-    constructor(
+-        MockPointTokenVault pointTokenVault_,
+-        address[3] memory admins
+-    ) {
++    constructor(MockPointTokenVault pointTokenVault_, address[3] memory admins) {
+         pointTokenVault = pointTokenVault_;
+ 
+         vm.prank(admins[1]);
+@@ -117,12 +114,10 @@ contract PointTokenVaultHandler is Test {
+         }
+     }
+ 
+-    function deposit(
+-        uint256 actorIndex,
+-        uint256 dstIndex,
+-        uint256 amount,
+-        uint256 tokenIndex
+-    ) public useRandomActor(actorIndex) {
++    function deposit(uint256 actorIndex, uint256 dstIndex, uint256 amount, uint256 tokenIndex)
++        public
++        useRandomActor(actorIndex)
++    {
+         actorIndex = bound(actorIndex, 0, 12);
+         dstIndex = bound(dstIndex, 0, 12);
+         amount = bound(amount, 0, 1000000000000 * 1e18);
+@@ -150,12 +145,10 @@ contract PointTokenVaultHandler is Test {
+         }
+     }
+ 
+-    function withdraw(
+-        uint256 actorIndex,
+-        uint256 dstIndex,
+-        uint256 amount,
+-        uint256 tokenIndex
+-    ) public useRandomActor(actorIndex) {
++    function withdraw(uint256 actorIndex, uint256 dstIndex, uint256 amount, uint256 tokenIndex)
++        public
++        useRandomActor(actorIndex)
++    {
+         actorIndex = bound(actorIndex, 0, 12);
+         dstIndex = bound(dstIndex, 0, 12);
+         amount = bound(amount, 0, 1000000000000 * 1e18);
+@@ -200,19 +193,17 @@ contract PointTokenVaultHandler is Test {
+ 
+         bytes32[] memory emptyProof = new bytes32[](0);
+ 
+-        MockPointTokenVault.Claim memory claim = MockPointTokenVault.Claim(
+-            pointsIds[pointsIdIndex],
+-            totalClaimable,
+-            amount,
+-            emptyProof
+-        );
++        MockPointTokenVault.Claim memory claim =
++            MockPointTokenVault.Claim(pointsIds[pointsIdIndex], totalClaimable, amount, emptyProof);
+ 
+         uint256 pTokenBalanceBefore = pointTokenVault.pTokens(pointsIds[pointsIdIndex]).balanceOf(actors[dstIndex].addr);
+         uint256 claimedBalanceBefore = pointTokenVault.claimedPTokens(actors[dstIndex].addr, pointsIds[pointsIdIndex]);
+ 
+         try pointTokenVault.claimPTokens(claim, actors[dstIndex].addr) {
+-            uint256 pTokenBalanceAfter = pointTokenVault.pTokens(pointsIds[pointsIdIndex]).balanceOf(actors[dstIndex].addr);
+-            uint256 claimedBalanceAfter = pointTokenVault.claimedPTokens(actors[dstIndex].addr, pointsIds[pointsIdIndex]);
++            uint256 pTokenBalanceAfter =
++                pointTokenVault.pTokens(pointsIds[pointsIdIndex]).balanceOf(actors[dstIndex].addr);
++            uint256 claimedBalanceAfter =
++                pointTokenVault.claimedPTokens(actors[dstIndex].addr, pointsIds[pointsIdIndex]);
+ 
+             claimedPTokensGhosts[actors[dstIndex].addr][pointsIds[pointsIdIndex]] += amount;
+             pTokenBalanceGhosts[actors[dstIndex].addr][pointsIds[pointsIdIndex]] += amount;
+@@ -254,17 +245,14 @@ contract PointTokenVaultHandler is Test {
+         pointTokenVault.setRedemption(pointsIds[pointsIdIndex], rewardToken, rewardPerPToken, false);
+         vm.startPrank(currentActor);
+ 
+-        MockPointTokenVault.Claim memory redemptionClaim = MockPointTokenVault.Claim(
+-            pointsIds[pointsIdIndex],
+-            rewardTokenAmount,
+-            rewardTokenAmount,
+-            new bytes32[](0)
+-        );
++        MockPointTokenVault.Claim memory redemptionClaim =
++            MockPointTokenVault.Claim(pointsIds[pointsIdIndex], rewardTokenAmount, rewardTokenAmount, new bytes32[](0));
+ 
+         uint256 rewardBalanceBefore = rewardToken.balanceOf(currentActor);
+ 
+         try pointTokenVault.redeemRewards(redemptionClaim, currentActor) {
+-            pTokenBalanceGhosts[currentActor][pointsIds[pointsIdIndex]] -= FixedPointMathLib.divWadUp(rewardTokenAmount, rewardPerPToken);
++            pTokenBalanceGhosts[currentActor][pointsIds[pointsIdIndex]] -=
++                FixedPointMathLib.divWadUp(rewardTokenAmount, rewardPerPToken);
+             assertEq(rewardToken.balanceOf(currentActor) - rewardBalanceBefore, rewardTokenAmount);
+         } catch (bytes memory reason) {
+             console.log("Unexpected revert: redeem failed!");
+@@ -310,7 +298,7 @@ contract PointTokenVaultHandler is Test {
+             // This can be re-added when issue #13 is resolved.
+             // Tests that pTokenAmount is never 0 if rewardAmount > 0
+             // if (amount > 0) {
+-                // assertGt(pToken.balanceOf(actors[dstIndex].addr) - receiverPTokenBalanceBefore, 0);
++            // assertGt(pToken.balanceOf(actors[dstIndex].addr) - receiverPTokenBalanceBefore, 0);
+             // }
+         } catch (bytes memory reason) {
+             console.log("Unexpected error: conversion failed!");
+@@ -320,19 +308,11 @@ contract PointTokenVaultHandler is Test {
+ 
+     // Helper functions ---
+ 
+-    function _simpleClaim(
+-        uint256 pointsIdIndex,
+-        uint256 pTokenAmount,
+-        uint256 actorIndex
+-    ) internal {
++    function _simpleClaim(uint256 pointsIdIndex, uint256 pTokenAmount, uint256 actorIndex) internal {
+         bytes32[] memory emptyProof = new bytes32[](0);
+ 
+-        MockPointTokenVault.Claim memory pTokenClaim = MockPointTokenVault.Claim(
+-            pointsIds[pointsIdIndex],
+-            type(uint256).max,
+-            pTokenAmount,
+-            emptyProof
+-        );
++        MockPointTokenVault.Claim memory pTokenClaim =
++            MockPointTokenVault.Claim(pointsIds[pointsIdIndex], type(uint256).max, pTokenAmount, emptyProof);
+ 
+         pointTokenVault.claimPTokens(pTokenClaim, actors[actorIndex].addr);
+         claimedPTokensGhosts[actors[actorIndex].addr][pointsIds[pointsIdIndex]] += pTokenAmount;
+@@ -346,8 +326,13 @@ contract PointTokenVaultHandler is Test {
+                     pointEarningTokenGhosts[actors[i].addr][address(pointEarningTokens[j])]
+                         != pointTokenVault.balances(actors[i].addr, pointEarningTokens[j])
+                 ) {
+-                    console.log("Ghost balance:", pointEarningTokenGhosts[actors[i].addr][address(pointEarningTokens[j])]);
+-                    console.log("Balance according to contract:", pointTokenVault.balances(actors[i].addr, pointEarningTokens[j]));
++                    console.log(
++                        "Ghost balance:", pointEarningTokenGhosts[actors[i].addr][address(pointEarningTokens[j])]
++                    );
++                    console.log(
++                        "Balance according to contract:",
++                        pointTokenVault.balances(actors[i].addr, pointEarningTokens[j])
++                    );
+ 
+                     return false;
+                 }
+@@ -358,14 +343,16 @@ contract PointTokenVaultHandler is Test {
+     }
+ 
+     function checkClaimedPTokensGhosts() public view returns (bool) {
+-        for (uint i; i < actors.length; i++) {
++        for (uint256 i; i < actors.length; i++) {
+             for (uint256 j; j < pointsIds.length; j++) {
+                 if (
+                     claimedPTokensGhosts[actors[i].addr][pointsIds[j]]
+                         != pointTokenVault.claimedPTokens(actors[i].addr, pointsIds[j])
+                 ) {
+                     console.log("Ghost balance:", claimedPTokensGhosts[actors[i].addr][pointsIds[j]]);
+-                    console.log("Balance according to contract:", pointTokenVault.claimedPTokens(actors[i].addr, pointsIds[j]));
++                    console.log(
++                        "Balance according to contract:", pointTokenVault.claimedPTokens(actors[i].addr, pointsIds[j])
++                    );
+ 
+                     return false;
+                 }
+@@ -399,4 +386,4 @@ contract PointTokenVaultHandler is Test {
+         currentActor = actors[index].addr;
+         actor_ = actors[index];
+     }
+-}
+\ No newline at end of file
++}
